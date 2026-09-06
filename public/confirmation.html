@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Order confirmed — GatePass</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/index.html" class="brand"><span class="stub"></span>GatePass</a>
+    <form id="search-form" class="search-form">
+      <input type="text" placeholder="Search teams, artists, venues...">
+      <button type="submit">Search</button>
+    </form>
+    <div class="header-links">
+      <a href="/cart.html" class="cart-link">Cart <span id="cart-count" class="cart-count" style="display:none">0</span></a>
+    </div>
+  </div>
+</header>
+
+<nav class="category-nav">
+  <div class="wrap" id="category-nav"></div>
+</nav>
+
+<div class="wrap confirm-page">
+  <div class="stub-icon"></div>
+  <h1 id="confirm-title">Order confirmed</h1>
+  <p id="confirm-sub">Your tickets are locked in.</p>
+  <div class="order-summary" id="order-summary"></div>
+  <p style="margin-top:28px;"><a class="btn" href="/index.html">Browse more events</a></p>
+</div>
+
+<footer class="site-footer">
+  <div class="wrap">GatePass is a demo marketplace. No real payments are processed.</div>
+</footer>
+
+<script src="/js/shared.js"></script>
+<script src="/js/confirmation.js"></script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GatePass — Live event tickets</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/index.html" class="brand"><span class="stub"></span>GatePass</a>
+    <form id="search-form" class="search-form">
+      <input type="text" placeholder="Search teams, artists, venues...">
+      <button type="submit">Search</button>
+    </form>
+    <div class="header-links">
+      <a href="/cart.html" class="cart-link">Cart <span id="cart-count" class="cart-count" style="display:none">0</span></a>
+    </div>
+  </div>
+</header>
+
+<nav class="category-nav">
+  <div class="wrap" id="category-nav"></div>
+</nav>
+
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <div class="hero-eyebrow-free">Every seat, straight from the box office</div>
+      <h1>Find your night <span class="accent">out.</span></h1>
+      <p>Ballgames, tours, and one-night-only shows — browse real listings and lock in seats in a couple of clicks.</p>
+    </div>
+    <div class="hero-card" id="featured-card">
+      <!-- populated by JS -->
+    </div>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="section-title">
+    <h2 id="results-title">All upcoming events</h2>
+    <span id="results-count"></span>
+  </div>
+  <div class="event-grid" id="event-grid">
+    <!-- populated by JS -->
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="wrap">GatePass is a demo marketplace. No real payments are processed.</div>
+</footer>
+
+<script src="/js/shared.js"></script>
+<script src="/js/home.js"></script>
+</body>
+</html>

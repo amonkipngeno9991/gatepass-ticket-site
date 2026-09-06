@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your cart — GatePass</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/index.html" class="brand"><span class="stub"></span>GatePass</a>
+    <form id="search-form" class="search-form">
+      <input type="text" placeholder="Search teams, artists, venues...">
+      <button type="submit">Search</button>
+    </form>
+    <div class="header-links">
+      <a href="/cart.html" class="cart-link">Cart <span id="cart-count" class="cart-count" style="display:none">0</span></a>
+    </div>
+  </div>
+</header>
+
+<nav class="category-nav">
+  <div class="wrap" id="category-nav"></div>
+</nav>
+
+<div class="wrap cart-page">
+  <h1>Your cart</h1>
+  <div id="error-slot"></div>
+  <div class="cart-layout">
+    <div>
+      <div id="cart-items"></div>
+    </div>
+    <aside class="sidebar-card">
+      <h3>Order summary</h3>
+      <div class="summary-row">
+        <span>Subtotal</span>
+        <span id="subtotal">$0.00</span>
+      </div>
+      <div class="summary-row total">
+        <span>Total</span>
+        <span id="total">$0.00</span>
+      </div>
+      <div style="margin-top:20px;">
+        <div class="form-field">
+          <label for="buyer-name">Full name</label>
+          <input type="text" id="buyer-name" placeholder="Jamie Rivera">
+        </div>
+        <div class="form-field">
+          <label for="buyer-email">Email</label>
+          <input type="email" id="buyer-email" placeholder="jamie@example.com">
+        </div>
+        <button class="btn btn-block" id="checkout-btn">Complete purchase</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <div class="wrap">GatePass is a demo marketplace. No real payments are processed.</div>
+</footer>
+
+<script src="/js/shared.js"></script>
+<script src="/js/cart.js"></script>
+</body>
+</html>
