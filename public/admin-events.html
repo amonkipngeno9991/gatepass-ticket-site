@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manage events — GatePass</title>
+<link rel="stylesheet" href="/css/style.css">
+<style>
+  .admin-wrap { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
+  .key-form { display: flex; gap: 8px; margin-bottom: 24px; }
+  .key-form input { flex: 1; padding: 9px 11px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; }
+  .admin-nav { display: flex; gap: 16px; margin-bottom: 24px; font-size: 14px; }
+  .admin-nav a { color: var(--teal); text-decoration: underline; }
+  .panel { background: var(--paper-raised); border: 1px solid var(--border); border-radius: 6px; padding: 18px 20px; margin-bottom: 20px; }
+  .panel h2 { font-size: 18px; margin-bottom: 14px; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .field-grid.full { grid-template-columns: 1fr; }
+  .field label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 3px; color: var(--text-muted); }
+  .field input, .field select, .field textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 14px;
+  }
+  .event-card { border: 1px solid var(--border); border-radius: 6px; padding: 16px 18px; margin-bottom: 14px; }
+  .event-card-head { display: flex; justify-content: space-between; align-items: start; gap: 10px; }
+  .event-card-head h3 { font-size: 17px; }
+  .event-card-head .meta { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+  .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; }
+  .btn-danger { background: #C0392B; color: #fff; }
+  .ticket-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13.5px; }
+  .ticket-row .t-info { flex: 1; }
+  .ticket-row .t-actions { display: flex; gap: 6px; }
+  .link-btn { background: none; border: none; color: var(--teal); text-decoration: underline; font-size: 13px; cursor: pointer; padding: 0; }
+  .collapsed { display: none; }
+  .msg { font-size: 13.5px; margin: 8px 0; }
+  .msg.ok { color: var(--teal); }
+  .msg.err { color: #C0392B; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/index.html" class="brand"><span class="stub"></span>GatePass</a>
+    <div class="header-links"><a href="/index.html" class="cart-link">Back to site</a></div>
+  </div>
+</header>
+
+<div class="admin-wrap">
+  <h1 style="margin-bottom:6px;">Manage events</h1>
+  <p style="color:var(--text-muted);margin-bottom:16px;">Add, edit, or remove events and ticket listings.</p>
+  <div class="admin-nav"><a href="/admin.html">View orders</a></div>
+
+  <form class="key-form" id="key-form">
+    <input type="password" id="admin-key" placeholder="Admin key">
+    <button class="btn" type="submit">Load</button>
+  </form>
+
+  <div class="panel">
+    <h2>Add a new event</h2>
+    <form id="new-event-form">
+      <div class="field-grid">
+        <div class="field"><label>Event name</label><input name="name" required></div>
+        <div class="field"><label>Category</label><input name="category" placeholder="Baseball, Concert..." required></div>
+      </div>
+      <div class="field-grid">
+        <div class="field"><label>Venue</label><input name="venue" required></div>
+        <div class="field"><label>Accent color</label>
+          <select name="accent"><option value="gold">Gold</option><option value="teal">Teal</option><option value="ink">Ink</option></select>
+        </div>
+      </div>
+      <div class="field-grid">
+        <div class="field"><label>City</label><input name="city" required></div>
+        <div class="field"><label>State</label><input name="state" required></div>
+      </div>
+      <div class="field-grid">
+        <div class="field"><label>Date</label><input type="date" name="event_date" required></div>
+        <div class="field"><label>Time</label><input name="event_time" placeholder="7:00 PM" required></div>
+      </div>
+      <div class="field-grid full">
+        <div class="field"><label>Short description</label><textarea name="blurb" rows="2"></textarea></div>
+      </div>
+      <button class="btn" type="submit">Create event</button>
+      <div class="msg" id="new-event-msg"></div>
+    </form>
+  </div>
+
+  <h2 style="margin-bottom:12px;">Existing events</h2>
+  <div id="events-list"></div>
+</div>
+
+<script>
+let ADMIN_KEY = '';
+
+function money(n) { return '$' + Number(n).toFixed(2); }
+
+async function api(path, options) {
+  const sep = path.includes('?') ? '&' : '?';
+  const res = await fetch(path + sep + 'key=' + encodeURIComponent(ADMIN_KEY), options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+function ticketRowHTML(t) {
+  return `
+    <div class="ticket-row" data-ticket-id="${t.id}">
+      <div class="t-info">${t.section} · Row ${t.row_label} · ${t.seat_type} · ${money(t.price)} · ${t.quantity_available} left</div>
+      <div class="t-actions">
+        <button class="link-btn" data-action="edit-ticket">Edit</button>
+        <button class="link-btn" data-action="delete-ticket" style="color:#C0392B;">Delete</button>
+      </div>
+    </div>
+    <div class="collapsed ticket-edit-form" style="padding:10px 0;border-top:1px solid var(--border);">
+      <div class="field-grid">
+        <div class="field"><label>Section</label><input name="section" value="${t.section}"></div>
+        <div class="field"><label>Row</label><input name="row_label" value="${t.row_label}"></div>
+      </div>
+      <div class="field-grid">
+        <div class="field"><label>Seat type</label><input name="seat_type" value="${t.seat_type}"></div>
+        <div class="field"><label>Price</label><input type="number" step="0.01" name="price" value="${t.price}"></div>
+      </div>
+      <div class="field-grid">
+        <div class="field"><label>Quantity available</label><input type="number" name="quantity_available" value="${t.quantity_available}"></div>
+      </div>
+      <button class="btn btn-sm" data-action="save-ticket">Save</button>
+    </div>
+  `;
+}
+
+function eventCardHTML(ev) {
+  return `
+    <div class="event-card" data-event-id="${ev.id}">
+      <div class="event-card-head">
+        <div>
+          <h3>${ev.name}</h3>
+          <div class="meta">${ev.category} · ${ev.venue}, ${ev.city} ${ev.state} · ${ev.event_date} ${ev.event_time}</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-sm btn-secondary" data-action="edit-event">Edit event</button>
+        <button class="btn btn-sm btn-danger" data-action="delete-event">Delete event</button>
+        <button class="link-btn" data-action="toggle-add-ticket">+ Add ticket listing</button>
+      </div>
+
+      <div class="collapsed event-edit-form" style="margin-top:12px;">
+        <div class="field-grid">
+          <div class="field"><label>Name</label><input name="name" value="${ev.name}"></div>
+          <div class="field"><label>Category</label><input name="category" value="${ev.category}"></div>
+        </div>
+        <div class="field-grid">
+          <div class="field"><label>Venue</label><input name="venue" value="${ev.venue}"></div>
+          <div class="field"><label>Accent</label>
+            <select name="accent">
+              <option value="gold" ${ev.accent === 'gold' ? 'selected' : ''}>Gold</option>
+              <option value="teal" ${ev.accent === 'teal' ? 'selected' : ''}>Teal</option>
+              <option value="ink" ${ev.accent === 'ink' ? 'selected' : ''}>Ink</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-grid">
+          <div class="field"><label>City</label><input name="city" value="${ev.city}"></div>
+          <div class="field"><label>State</label><input name="state" value="${ev.state}"></div>
+        </div>
+        <div class="field-grid">
+          <div class="field"><label>Date</label><input type="date" name="event_date" value="${ev.event_date}"></div>
+          <div class="field"><label>Time</label><input name="event_time" value="${ev.event_time}"></div>
+        </div>
+        <div class="field-grid full">
+          <div class="field"><label>Description</label><textarea name="blurb" rows="2">${ev.blurb || ''}</textarea></div>
+        </div>
+        <button class="btn btn-sm" data-action="save-event">Save changes</button>
+      </div>
+
+      <div class="collapsed add-ticket-form" style="margin-top:12px;">
+        <div class="field-grid">
+          <div class="field"><label>Section</label><input name="section" placeholder="Field Box 12"></div>
+          <div class="field"><label>Row</label><input name="row_label" placeholder="F"></div>
+        </div>
+        <div class="field-grid">
+          <div class="field"><label>Seat type</label><input name="seat_type" placeholder="Standard"></div>
+          <div class="field"><label>Price</label><input type="number" step="0.01" name="price" placeholder="28.00"></div>
+        </div>
+        <div class="field-grid">
+          <div class="field"><label>Quantity available</label><input type="number" name="quantity_available" placeholder="40"></div>
+        </div>
+        <button class="btn btn-sm" data-action="save-new-ticket">Add listing</button>
+      </div>
+
+      <div class="tickets-list" style="margin-top:12px;">
+        ${ev.tickets.map(ticketRowHTML).join('')}
+      </div>
+      <div class="msg" data-role="event-msg"></div>
+    </div>
+  `;
+}
+
+function showMsg(el, text, ok) {
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+  if (ok) setTimeout(() => { el.textContent = ''; }, 2500);
+}
+
+async function loadEvents() {
+  const listEl = document.getElementById('events-list');
+  listEl.innerHTML = 'Loading…';
+  try {
+    const { events } = await api('/api/admin/events');
+    if (events.length === 0) {
+      listEl.innerHTML = '<p style="color:var(--text-muted);">No events yet.</p>';
+      return;
+    }
+    listEl.innerHTML = events.map(eventCardHTML).join('');
+    wireEventCards();
+  } catch (e) {
+    listEl.innerHTML = `<div class="error-banner">${e.message}</div>`;
+  }
+}
+
+function wireEventCards() {
+  document.querySelectorAll('.event-card').forEach((card) => {
+    const eventId = card.dataset.eventId;
+    const msgEl = card.querySelector('[data-role="event-msg"]');
+    const editForm = card.querySelector('.event-edit-form');
+    const addTicketForm = card.querySelector('.add-ticket-form');
+
+    card.querySelector('[data-action="edit-event"]').addEventListener('click', () => {
+      editForm.classList.toggle('collapsed');
+    });
+    card.querySelector('[data-action="toggle-add-ticket"]').addEventListener('click', () => {
+      addTicketForm.classList.toggle('collapsed');
+    });
+    card.querySelector('[data-action="delete-event"]').addEventListener('click', async () => {
+      if (!confirm('Delete this event and all its ticket listings?')) return;
+      try {
+        await api(`/api/admin/events/${eventId}`, { method: 'DELETE' });
+        loadEvents();
+      } catch (e) {
+        showMsg(msgEl, e.message, false);
+      }
+    });
+    card.querySelector('[data-action="save-event"]').addEventListener('click', async () => {
+      const inputs = editForm.querySelectorAll('input, select, textarea');
+      const body = {};
+      inputs.forEach((i) => { body[i.name] = i.value; });
+      try {
+        await api(`/api/admin/events/${eventId}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        showMsg(msgEl, 'Saved', true);
+        loadEvents();
+      } catch (e) {
+        showMsg(msgEl, e.message, false);
+      }
+    });
+    card.querySelector('[data-action="save-new-ticket"]').addEventListener('click', async () => {
+      const inputs = addTicketForm.querySelectorAll('input');
+      const body = {};
+      inputs.forEach((i) => { body[i.name] = i.value; });
+      try {
+        await api(`/api/admin/events/${eventId}/tickets`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        loadEvents();
+      } catch (e) {
+        showMsg(msgEl, e.message, false);
+      }
+    });
+
+    card.querySelectorAll('[data-action="edit-ticket"]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        btn.closest('.ticket-row').nextElementSibling.classList.toggle('collapsed');
+      });
+    });
+    card.querySelectorAll('[data-action="delete-ticket"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const ticketId = btn.closest('.ticket-row').dataset.ticketId;
+        if (!confirm('Delete this ticket listing?')) return;
+        try {
+          await api(`/api/admin/tickets/${ticketId}`, { method: 'DELETE' });
+          loadEvents();
+        } catch (e) {
+          showMsg(msgEl, e.message, false);
+        }
+      });
+    });
+    card.querySelectorAll('[data-action="save-ticket"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const form = btn.closest('.ticket-edit-form');
+        const ticketId = form.previousElementSibling.dataset.ticketId;
+        const inputs = form.querySelectorAll('input');
+        const body = {};
+        inputs.forEach((i) => { body[i.name] = i.value; });
+        try {
+          await api(`/api/admin/tickets/${ticketId}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          });
+          loadEvents();
+        } catch (e) {
+          showMsg(msgEl, e.message, false);
+        }
+      });
+    });
+  });
+}
+
+document.getElementById('new-event-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const body = {};
+  new FormData(form).forEach((v, k) => { body[k] = v; });
+  const msgEl = document.getElementById('new-event-msg');
+  try {
+    await api('/api/admin/events', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    showMsg(msgEl, 'Event created', true);
+    form.reset();
+    loadEvents();
+  } catch (err) {
+    showMsg(msgEl, err.message, false);
+  }
+});
+
+document.getElementById('key-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  ADMIN_KEY = document.getElementById('admin-key').value.trim();
+  if (ADMIN_KEY) {
+    localStorage.setItem('gatepass_admin_key', ADMIN_KEY);
+    loadEvents();
+  }
+});
+
+const savedKey = localStorage.getItem('gatepass_admin_key');
+if (savedKey) {
+  ADMIN_KEY = savedKey;
+  document.getElementById('admin-key').value = savedKey;
+  loadEvents();
+}
+</script>
+</body>
+</html>

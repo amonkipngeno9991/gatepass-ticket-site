@@ -62,6 +62,19 @@ function sendJson(res, status, data) {
   res.end(body);
 }
 
+// Returns null if the request is a valid admin request, otherwise
+// { status, error } to send back immediately.
+function checkAdmin(query) {
+  const adminKey = process.env.ADMIN_KEY;
+  if (!adminKey) {
+    return { status: 500, error: 'Set an ADMIN_KEY environment variable to enable admin features.' };
+  }
+  if (query.get('key') !== adminKey) {
+    return { status: 401, error: 'Wrong or missing admin key.' };
+  }
+  return null;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let chunks = [];
@@ -374,13 +387,8 @@ async function handleApi(req, res, pathname, query) {
   // Shows every order on the site with proof of the real PayPal payment behind it.
   // Requires the ADMIN_KEY environment variable to be set - without it, this is disabled.
   if (pathname === '/api/admin/orders' && req.method === 'GET') {
-    const adminKey = process.env.ADMIN_KEY;
-    if (!adminKey) {
-      return sendJson(res, 500, { error: 'Set an ADMIN_KEY environment variable to enable this page.' });
-    }
-    if (query.get('key') !== adminKey) {
-      return sendJson(res, 401, { error: 'Wrong or missing admin key.' });
-    }
+    const check = checkAdmin(query);
+    if (check) return sendJson(res, check.status, { error: check.error });
     const orders = db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all();
     const getItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?');
     const full = orders.map((order) => ({
@@ -390,6 +398,123 @@ async function handleApi(req, res, pathname, query) {
       items: getItems.all(order.id),
     }));
     return sendJson(res, 200, { orders: full });
+  }
+
+  // ---- Admin: events + ticket listings management (add/edit/delete) ----
+
+  // GET /api/admin/events?key=...  -> every event with its ticket listings
+  if (pathname === '/api/admin/events' && req.method === 'GET') {
+    const check = checkAdmin(query);
+    if (check) return sendJson(res, check.status, { error: check.error });
+    const events = db.prepare('SELECT * FROM events ORDER BY event_date ASC').all();
+    const getTickets = db.prepare('SELECT * FROM tickets WHERE event_id = ? ORDER BY price ASC');
+    const full = events.map((e) => ({ ...e, tickets: getTickets.all(e.id) }));
+    return sendJson(res, 200, { events: full });
+  }
+
+  // POST /api/admin/events?key=...  -> create a new event
+  if (pathname === '/api/admin/events' && req.method === 'POST') {
+    const check = checkAdmin(query);
+    if (check) return sendJson(res, check.status, { error: check.error });
+    const body = await readBody(req);
+    const required = ['name', 'category', 'venue', 'city', 'state', 'event_date', 'event_time'];
+    for (const f of required) {
+      if (!body[f] || !String(body[f]).trim()) {
+        return sendJson(res, 400, { error: `Missing required field: ${f}` });
+      }
+    }
+    const result = db
+      .prepare(
+        `INSERT INTO events (name, category, venue, city, state, event_date, event_time, blurb, accent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        body.name.trim(), body.category.trim(), body.venue.trim(), body.city.trim(), body.state.trim(),
+        body.event_date.trim(), body.event_time.trim(), (body.blurb || '').trim(), body.accent || 'ink'
+      );
+    return sendJson(res, 200, { id: Number(result.lastInsertRowid) });
+  }
+
+  // PATCH /api/admin/events/:id?key=...  -> update an event's details
+  m = pathname.match(/^\/api\/admin\/events\/(\d+)$/);
+  if (m && req.method === 'PATCH') {
+    const check = checkAdmin(query);
+    if (check) return sendJson(res, check.status, { error: check.error });
+    const eventId = Number(m[1]);
+    const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+    if (!existing) return sendJson(res, 404, { error: 'Event not found' });
+    const body = await readBody(req);
+    const fields = ['name', 'category', 'venue', 'city', 'state', 'event_date', 'event_time', 'blurb', 'accent'];
+    const updated = {};
+    for (const f of fields) updated[f] = body[f] !== undefined ? body[f] : existing[f];
+    db.prepare(
+      `UPDATE events SET name=?, category=?, venue=?, city=?, state=?, event_date=?, event_time=?, blurb=?, accent=?
+       WHERE id=?`
+    ).run(
+      updated.name, updated.category, updated.venue, updated.city, updated.state,
+      updated.event_date, updated.event_time, updated.blurb, updated.accent, eventId
+    );
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // DELETE /api/admin/events/:id?key=...  -> delete an event (and its ticket listings)
+  m = pathname.match(/^\/api\/admin\/events\/(\d+)$/);
+  if (m && req.method === 'DELETE') {
+    const check = checkAdmin(query);
+    if (check) return sendJson(res, check.status, { error: check.error });
+    db.prepare('DELETE FROM events WHERE id = ?').run(Number(m[1]));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // POST /api/admin/events/:id/tickets?key=...  -> add a ticket listing to an event
+  m = pathname.match(/^\/api\/admin\/events\/(\d+)\/tickets$/);
+  if (m && req.method === 'POST') {
+    const check = checkAdmin(query);
+    if (check) return sendJson(res, check.status, { error: check.error });
+    const eventId = Number(m[1]);
+    const event = db.prepare('SELECT id FROM events WHERE id = ?').get(eventId);
+    if (!event) return sendJson(res, 404, { error: 'Event not found' });
+    const body = await readBody(req);
+    if (!body.section || !body.row_label || !body.seat_type || body.price == null || body.quantity_available == null) {
+      return sendJson(res, 400, { error: 'Missing required ticket fields' });
+    }
+    const result = db
+      .prepare(
+        `INSERT INTO tickets (event_id, section, row_label, seat_type, price, quantity_available)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(eventId, body.section, body.row_label, body.seat_type, Number(body.price), Number(body.quantity_available));
+    return sendJson(res, 200, { id: Number(result.lastInsertRowid) });
+  }
+
+  // PATCH /api/admin/tickets/:id?key=...  -> update a ticket listing
+  m = pathname.match(/^\/api\/admin\/tickets\/(\d+)$/);
+  if (m && req.method === 'PATCH') {
+    const check = checkAdmin(query);
+    if (check) return sendJson(res, check.status, { error: check.error });
+    const ticketId = Number(m[1]);
+    const existing = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId);
+    if (!existing) return sendJson(res, 404, { error: 'Ticket listing not found' });
+    const body = await readBody(req);
+    const fields = ['section', 'row_label', 'seat_type', 'price', 'quantity_available'];
+    const updated = {};
+    for (const f of fields) updated[f] = body[f] !== undefined ? body[f] : existing[f];
+    db.prepare(
+      `UPDATE tickets SET section=?, row_label=?, seat_type=?, price=?, quantity_available=? WHERE id=?`
+    ).run(
+      updated.section, updated.row_label, updated.seat_type,
+      Number(updated.price), Number(updated.quantity_available), ticketId
+    );
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // DELETE /api/admin/tickets/:id?key=...  -> remove a ticket listing
+  m = pathname.match(/^\/api\/admin\/tickets\/(\d+)$/);
+  if (m && req.method === 'DELETE') {
+    const check = checkAdmin(query);
+    if (check) return sendJson(res, check.status, { error: check.error });
+    db.prepare('DELETE FROM tickets WHERE id = ?').run(Number(m[1]));
+    return sendJson(res, 200, { ok: true });
   }
 
   return sendJson(res, 404, { error: 'Not found' });
