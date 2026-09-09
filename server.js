@@ -2,10 +2,47 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+
+// node:sqlite is only available from Node 22.5+. Fail with a clear message
+// instead of a cryptic "Cannot find module 'node:sqlite'" error.
+const [major, minor] = process.versions.node.split('.').map(Number);
+if (major < 22 || (major === 22 && minor < 5)) {
+  console.error(
+    `\nGatePass needs Node.js v22.5.0 or later (for the built-in SQLite module).\n` +
+    `You're running Node ${process.versions.node}.\n\n` +
+    `On Termux: run "pkg install nodejs" (not nodejs-lts) to get a current build.\n`
+  );
+  process.exit(1);
+}
+
 const db = require('./db');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+
+// PayPal config - set these as environment variables (see README).
+// PAYPAL_MODE should be "sandbox" while testing, "live" once you're ready for real payments.
+const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || '';
+const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || '';
+const PAYPAL_BASE =
+  process.env.PAYPAL_MODE === 'live'
+    ? 'https://api-m.paypal.com'
+    : 'https://api-m.sandbox.paypal.com';
+
+async function paypalAccessToken() {
+  const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString('base64');
+  const res = await fetch(`${PAYPAL_BASE}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials',
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || 'Could not authenticate with PayPal');
+  return data.access_token;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -95,6 +132,42 @@ function cartForSession(sid) {
     .all(sid);
   const total = rows.reduce((sum, r) => sum + r.price * r.quantity, 0);
   return { items: rows, total };
+}
+
+// Creates the order + order_items rows and decrements inventory. Called only after
+// a payment has been verified as completed (see /api/paypal/capture-order).
+// paypalInfo (optional) records proof of the real payment for the admin page.
+function finalizeOrder(sid, name, email, paypalInfo) {
+  const cart = cartForSession(sid);
+  if (cart.items.length === 0) {
+    throw new Error('Your cart is empty');
+  }
+  for (const item of cart.items) {
+    if (item.quantity > item.quantity_available) {
+      throw new Error(`"${item.event_name}" no longer has enough tickets available`);
+    }
+  }
+  const p = paypalInfo || {};
+  const orderResult = db
+    .prepare(
+      `INSERT INTO orders (session_id, buyer_name, buyer_email, total,
+        paypal_order_id, paypal_capture_id, paypal_payer_email, paypal_raw)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(sid, name, email, cart.total, p.orderId || null, p.captureId || null, p.payerEmail || null, p.raw || null);
+  const orderId = Number(orderResult.lastInsertRowid);
+  const insertOrderItem = db.prepare(
+    `INSERT INTO order_items (order_id, event_name, section, row_label, quantity, price)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  );
+  for (const item of cart.items) {
+    insertOrderItem.run(orderId, item.event_name, item.section, item.row_label, item.quantity, item.price);
+    db.prepare('UPDATE tickets SET quantity_available = quantity_available - ? WHERE id = ?').run(
+      item.quantity, item.ticket_id
+    );
+  }
+  db.prepare('DELETE FROM cart_items WHERE session_id = ?').run(sid);
+  return orderId;
 }
 
 // ---------- static files ----------
@@ -214,39 +287,78 @@ async function handleApi(req, res, pathname, query) {
     return sendJson(res, 200, cartForSession(sid));
   }
 
-  // POST /api/checkout  { name, email }
-  if (pathname === '/api/checkout' && req.method === 'POST') {
-    const body = await readBody(req);
-    const name = (body.name || '').trim();
-    const email = (body.email || '').trim();
-    if (!name || !email.includes('@')) {
-      return sendJson(res, 400, { error: 'A valid name and email are required' });
-    }
+  // POST /api/paypal/create-order  -> creates a real PayPal order for the current cart total
+  if (pathname === '/api/paypal/create-order' && req.method === 'POST') {
     const cart = cartForSession(sid);
     if (cart.items.length === 0) {
       return sendJson(res, 400, { error: 'Your cart is empty' });
     }
-    for (const item of cart.items) {
-      if (item.quantity > item.quantity_available) {
-        return sendJson(res, 400, { error: `"${item.event_name}" no longer has enough tickets available` });
+    if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) {
+      return sendJson(res, 500, { error: 'PayPal is not configured on this server yet.' });
+    }
+    try {
+      const token = await paypalAccessToken();
+      const ppRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          intent: 'CAPTURE',
+          purchase_units: [{ amount: { currency_code: 'USD', value: cart.total.toFixed(2) } }],
+        }),
+      });
+      const order = await ppRes.json();
+      if (!ppRes.ok) throw new Error(order.message || 'PayPal rejected the order');
+      return sendJson(res, 200, { id: order.id });
+    } catch (err) {
+      return sendJson(res, 500, { error: err.message });
+    }
+  }
+
+  // POST /api/paypal/capture-order  { orderID, name, email }
+  // Verifies the payment actually completed on PayPal's side before creating our order.
+  if (pathname === '/api/paypal/capture-order' && req.method === 'POST') {
+    const body = await readBody(req);
+    const orderID = body.orderID;
+    if (!orderID) return sendJson(res, 400, { error: 'Missing PayPal order ID' });
+    try {
+      const token = await paypalAccessToken();
+      const capRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders/${orderID}/capture`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      const capData = await capRes.json();
+      if (!capRes.ok || capData.status !== 'COMPLETED') {
+        throw new Error('PayPal did not confirm this payment as completed.');
       }
+      const payer = capData.payer || {};
+      const payerName = [payer.name && payer.name.given_name, payer.name && payer.name.surname]
+        .filter(Boolean)
+        .join(' ');
+      const name = (body.name || '').trim() || payerName || 'PayPal customer';
+      const email = (body.email || '').trim() || payer.email_address || 'unknown@paypal.com';
+      const captureId =
+        capData.purchase_units &&
+        capData.purchase_units[0] &&
+        capData.purchase_units[0].payments &&
+        capData.purchase_units[0].payments.captures &&
+        capData.purchase_units[0].payments.captures[0] &&
+        capData.purchase_units[0].payments.captures[0].id;
+
+      const orderId = finalizeOrder(sid, name, email, {
+        orderId: orderID,
+        captureId: captureId || null,
+        payerEmail: payer.email_address || null,
+        raw: JSON.stringify(capData),
+      });
+      return sendJson(res, 200, { orderId });
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
     }
-    const orderResult = db
-      .prepare('INSERT INTO orders (session_id, buyer_name, buyer_email, total) VALUES (?, ?, ?, ?)')
-      .run(sid, name, email, cart.total);
-    const orderId = Number(orderResult.lastInsertRowid);
-    const insertOrderItem = db.prepare(
-      `INSERT INTO order_items (order_id, event_name, section, row_label, quantity, price)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    );
-    for (const item of cart.items) {
-      insertOrderItem.run(orderId, item.event_name, item.section, item.row_label, item.quantity, item.price);
-      db.prepare('UPDATE tickets SET quantity_available = quantity_available - ? WHERE id = ?').run(
-        item.quantity, item.ticket_id
-      );
-    }
-    db.prepare('DELETE FROM cart_items WHERE session_id = ?').run(sid);
-    return sendJson(res, 200, { orderId });
+  }
+
+  // GET /api/paypal/client-id -> the public client ID the frontend needs to load PayPal's button
+  if (pathname === '/api/paypal/client-id' && req.method === 'GET') {
+    return sendJson(res, 200, { clientId: PAYPAL_CLIENT_ID || null });
   }
 
   // GET /api/orders/:id
@@ -256,6 +368,28 @@ async function handleApi(req, res, pathname, query) {
     if (!order) return sendJson(res, 404, { error: 'Order not found' });
     const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
     return sendJson(res, 200, { order, items });
+  }
+
+  // GET /api/admin/orders?key=YOUR_ADMIN_KEY
+  // Shows every order on the site with proof of the real PayPal payment behind it.
+  // Requires the ADMIN_KEY environment variable to be set - without it, this is disabled.
+  if (pathname === '/api/admin/orders' && req.method === 'GET') {
+    const adminKey = process.env.ADMIN_KEY;
+    if (!adminKey) {
+      return sendJson(res, 500, { error: 'Set an ADMIN_KEY environment variable to enable this page.' });
+    }
+    if (query.get('key') !== adminKey) {
+      return sendJson(res, 401, { error: 'Wrong or missing admin key.' });
+    }
+    const orders = db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all();
+    const getItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?');
+    const full = orders.map((order) => ({
+      ...order,
+      paypal_raw: undefined, // sent separately, parsed, to keep the list readable
+      paypal_details: order.paypal_raw ? JSON.parse(order.paypal_raw) : null,
+      items: getItems.all(order.id),
+    }));
+    return sendJson(res, 200, { orders: full });
   }
 
   return sendJson(res, 404, { error: 'Not found' });

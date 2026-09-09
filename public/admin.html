@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — GatePass</title>
+<link rel="stylesheet" href="/css/style.css">
+<style>
+  .admin-wrap { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
+  .order-card {
+    background: var(--paper-raised); border: 1px solid var(--border);
+    border-radius: 6px; padding: 18px 20px; margin-bottom: 16px;
+  }
+  .order-card h3 { font-size: 18px; margin-bottom: 4px; }
+  .order-meta { color: var(--text-muted); font-size: 13.5px; margin-bottom: 12px; }
+  .paypal-proof {
+    background: var(--paper); border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 12px; font-size: 12.5px; font-family: monospace;
+    overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  }
+  .proof-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; padding: 3px 0; }
+  .proof-row .k { color: var(--text-muted); }
+  .no-proof { color: var(--text-muted); font-size: 13.5px; font-style: italic; }
+  .key-form { display: flex; gap: 8px; margin-bottom: 28px; }
+  .key-form input { flex: 1; padding: 9px 11px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="/index.html" class="brand"><span class="stub"></span>GatePass</a>
+    <div class="header-links"><a href="/index.html" class="cart-link">Back to site</a></div>
+  </div>
+</header>
+
+<div class="admin-wrap">
+  <h1 style="margin-bottom:6px;">Orders</h1>
+  <p style="color:var(--text-muted);margin-bottom:20px;">Every order placed, with the real PayPal payment proof behind it.</p>
+
+  <form class="key-form" id="key-form">
+    <input type="password" id="admin-key" placeholder="Admin key">
+    <button class="btn" type="submit">Load</button>
+  </form>
+
+  <div id="orders-list"></div>
+</div>
+
+<script>
+function money(n) { return '$' + Number(n).toFixed(2); }
+
+function paypalProofHTML(order) {
+  if (!order.paypal_capture_id) {
+    return '<div class="no-proof">No PayPal payment attached to this order (may have been a test before PayPal was configured).</div>';
+  }
+  return `
+    <div class="proof-row"><span class="k">PayPal order ID</span><span>${order.paypal_order_id || '—'}</span></div>
+    <div class="proof-row"><span class="k">PayPal capture ID</span><span>${order.paypal_capture_id}</span></div>
+    <div class="proof-row"><span class="k">Payer email</span><span>${order.paypal_payer_email || '—'}</span></div>
+  `;
+}
+
+function orderCardHTML(order) {
+  const itemsList = order.items
+    .map((i) => `${i.event_name} — ${i.section} (×${i.quantity}) — ${money(i.price * i.quantity)}`)
+    .join('<br>');
+  return `
+    <div class="order-card">
+      <h3>Order #${order.id} — ${money(order.total)}</h3>
+      <div class="order-meta">${order.buyer_name} · ${order.buyer_email} · ${order.created_at}</div>
+      <div style="margin-bottom:12px;font-size:14px;">${itemsList}</div>
+      ${paypalProofHTML(order)}
+    </div>
+  `;
+}
+
+async function loadOrders(key) {
+  const listEl = document.getElementById('orders-list');
+  listEl.innerHTML = 'Loading…';
+  try {
+    const res = await fetch('/api/admin/orders?key=' + encodeURIComponent(key));
+    const data = await res.json();
+    if (!res.ok) {
+      listEl.innerHTML = `<div class="error-banner">${data.error}</div>`;
+      return;
+    }
+    if (data.orders.length === 0) {
+      listEl.innerHTML = '<p style="color:var(--text-muted);">No orders yet.</p>';
+      return;
+    }
+    listEl.innerHTML = data.orders.map(orderCardHTML).join('');
+  } catch (e) {
+    listEl.innerHTML = `<div class="error-banner">Could not load orders.</div>`;
+  }
+}
+
+document.getElementById('key-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const key = document.getElementById('admin-key').value.trim();
+  if (key) {
+    localStorage.setItem('gatepass_admin_key', key);
+    loadOrders(key);
+  }
+});
+
+// Convenience: remember the key locally so you don't retype it every visit.
+const savedKey = localStorage.getItem('gatepass_admin_key');
+if (savedKey) {
+  document.getElementById('admin-key').value = savedKey;
+  loadOrders(savedKey);
+}
+</script>
+</body>
+</html>

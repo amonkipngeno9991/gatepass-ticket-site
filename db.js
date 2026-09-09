@@ -44,7 +44,11 @@ db.exec(`
     buyer_name TEXT NOT NULL,
     buyer_email TEXT NOT NULL,
     total REAL NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    paypal_order_id TEXT,
+    paypal_capture_id TEXT,
+    paypal_payer_email TEXT,
+    paypal_raw TEXT
   );
 
   CREATE TABLE IF NOT EXISTS order_items (
@@ -57,6 +61,20 @@ db.exec(`
     price REAL NOT NULL
   );
 `);
+
+// Safe migration: if an older database file already exists without the
+// PayPal columns, add them instead of failing.
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  const has = cols.some((c) => c.name === column);
+  if (!has) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+ensureColumn('orders', 'paypal_order_id', 'TEXT');
+ensureColumn('orders', 'paypal_capture_id', 'TEXT');
+ensureColumn('orders', 'paypal_payer_email', 'TEXT');
+ensureColumn('orders', 'paypal_raw', 'TEXT');
 
 function seedIfEmpty() {
   const { count } = db.prepare('SELECT COUNT(*) AS count FROM events').get();

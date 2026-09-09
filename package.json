@@ -1,6 +1,7 @@
 {
   "name": "gatepass-ticket-site",
   "version": "1.0.0",
+  "description": "GatePass - a demo ticket marketplace (Node.js + built-in SQLite, plain HTML/CSS/JS frontend)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -8,5 +9,6 @@
   "engines": {
     "node": ">=22.5.0"
   },
+  "license": "UNLICENSED",
   "private": true
 }

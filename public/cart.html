@@ -44,14 +44,15 @@
       </div>
       <div style="margin-top:20px;">
         <div class="form-field">
-          <label for="buyer-name">Full name</label>
+          <label for="buyer-name">Full name <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
           <input type="text" id="buyer-name" placeholder="Jamie Rivera">
         </div>
         <div class="form-field">
-          <label for="buyer-email">Email</label>
+          <label for="buyer-email">Email <span style="font-weight:400;color:var(--text-muted);">(optional)</span></label>
           <input type="email" id="buyer-email" placeholder="jamie@example.com">
         </div>
-        <button class="btn btn-block" id="checkout-btn">Complete purchase</button>
+        <div id="paypal-button-container"></div>
+        <div id="paypal-status" style="font-size:13px;color:var(--text-muted);margin-top:8px;"></div>
       </div>
     </aside>
   </div>

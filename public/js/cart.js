@@ -79,24 +79,66 @@ async function loadCart() {
   }
 }
 
-document.getElementById('checkout-btn').addEventListener('click', async () => {
-  const name = document.getElementById('buyer-name').value.trim();
-  const email = document.getElementById('buyer-email').value.trim();
-  const btn = document.getElementById('checkout-btn');
-  btn.disabled = true;
-  btn.textContent = 'Processing…';
+async function loadPayPalButton() {
+  const container = document.getElementById('paypal-button-container');
+  const statusEl = document.getElementById('paypal-status');
   try {
-    const { orderId } = await fetchJSON('/api/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email }),
-    });
-    window.location.href = `/confirmation.html?order=${orderId}`;
-  } catch (e) {
-    showError(e.message);
-    btn.disabled = false;
-    btn.textContent = 'Complete purchase';
-  }
-});
+    const { clientId } = await fetchJSON('/api/paypal/client-id');
+    if (!clientId) {
+      statusEl.textContent = 'PayPal isn\'t configured yet on this server.';
+      return;
+    }
+    // Load the PayPal SDK script dynamically (only once).
+    if (!document.getElementById('paypal-sdk')) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.id = 'paypal-sdk';
+        script.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&currency=USD`;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Could not load PayPal'));
+        document.head.appendChild(script);
+      });
+    }
 
-document.addEventListener('DOMContentLoaded', loadCart);
+    window.paypal.Buttons({
+      style: { layout: 'vertical', color: 'gold', shape: 'rect', label: 'paypal' },
+      createOrder: async () => {
+        showError('');
+        const { id, error } = await fetchJSON('/api/paypal/create-order', { method: 'POST' })
+          .catch((e) => ({ error: e.message }));
+        if (error) {
+          showError(error);
+          throw new Error(error);
+        }
+        return id;
+      },
+      onApprove: async (data) => {
+        statusEl.textContent = 'Confirming your payment…';
+        try {
+          const name = document.getElementById('buyer-name').value.trim();
+          const email = document.getElementById('buyer-email').value.trim();
+          const { orderId } = await fetchJSON('/api/paypal/capture-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderID: data.orderID, name, email }),
+          });
+          window.location.href = `/confirmation.html?order=${orderId}`;
+        } catch (e) {
+          statusEl.textContent = '';
+          showError(e.message);
+        }
+      },
+      onError: (err) => {
+        showError('PayPal ran into a problem. Please try again.');
+        console.error(err);
+      },
+    }).render('#paypal-button-container');
+  } catch (e) {
+    statusEl.textContent = 'Could not load PayPal checkout.';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadCart();
+  loadPayPalButton();
+});
